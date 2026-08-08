@@ -1,8 +1,8 @@
 # Bwin access-id kazıyıcı (her 6 saat)
-# Not: GITHUB_TOKEN secret yazamaz. Secret güncellemek için opsiyonel
-#      repo secret: GH_PAT (classic token, scope: repo)
+# Not: GITHUB_TOKEN secret yazamaz. Secret güncellemek için:
+#      repo secret: GH_TOKENS (classic PAT, scope: repo)
 #
-# Secrets: BWIN_ACCESS_ID (seed), GH_PAT (opsiyonel)
+# Secrets: BWIN_ACCESS_ID (seed), GH_TOKENS (secret yazmak için)
 
 name: scrape-bwin-access
 
@@ -55,15 +55,15 @@ jobs:
           echo "Resolved access id (len=${#ID})"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
 
-      - name: Optionally update BWIN_ACCESS_ID secret
+      - name: Update BWIN_ACCESS_ID secret
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_TOKENS }}
           NEW_ID: ${{ steps.access.outputs.id }}
           OLD_ID: ${{ secrets.BWIN_ACCESS_ID }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "GH_PAT secret yok — secret guncelleme atlandi (poll yine discover eder)"
+            echo "GH_TOKENS secret yok — secret guncelleme atlandi"
             exit 0
           fi
           if [ -n "${OLD_ID:-}" ] && [ "$NEW_ID" = "$OLD_ID" ]; then
@@ -71,4 +71,4 @@ jobs:
             exit 0
           fi
           printf '%s' "$NEW_ID" | gh secret set BWIN_ACCESS_ID --repo "$GITHUB_REPOSITORY"
-          echo "BWIN_ACCESS_ID secret updated via GH_PAT"
+          echo "BWIN_ACCESS_ID secret updated via GH_TOKENS"
