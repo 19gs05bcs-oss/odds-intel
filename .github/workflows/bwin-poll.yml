@@ -1,15 +1,18 @@
-# Manual + scheduled Bwin → Supabase poll (tests GitHub Actions IP vs Koyeb 403)
+# Bwin → Supabase poller (GitHub Actions)
 #
-# Repo Secrets (Settings → Secrets and variables → Actions):
+# Secrets (optional but recommended fallback):
 #   SUPABASE_URL
 #   SUPABASE_KEY
-#   BWIN_ACCESS_ID
+#   BWIN_ACCESS_ID   # optional; job rediscovers/validates if missing/invalid
+#
+# Locale/env are set below (US works with current access id).
 
 name: bwin-poll
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Every 12 hours UTC — change if needed
+    - cron: "0 */12 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -20,6 +23,17 @@ jobs:
   poll:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      BWIN_LANG: en
+      BWIN_COUNTRY: US
+      BWIN_USER_COUNTRY: US
+      BWIN_SPORT_IDS: "4"
+      BWIN_MAX_FIXTURES: "0"
+      LOG_LEVEL: INFO
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      # Optional seed; code validates and rediscovers if invalid
+      BWIN_ACCESS_ID: ${{ secrets.BWIN_ACCESS_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,20 +49,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Resolve access id
+      - name: Resolve working access id
         id: access
-        env:
-          BWIN_ACCESS_ID: ${{ secrets.BWIN_ACCESS_ID }}
         run: |
           set -euo pipefail
-          if [ -n "${BWIN_ACCESS_ID:-}" ]; then
-            echo "Using BWIN_ACCESS_ID secret"
-            echo "id=$BWIN_ACCESS_ID" >> "$GITHUB_OUTPUT"
-          else
-            ID="$(odds-intel discover-access-id)"
-            echo "Discovered access id"
-            echo "id=$ID" >> "$GITHUB_OUTPUT"
-          fi
+          ID="$(odds-intel discover-access-id)"
+          echo "Resolved access id (len=${#ID})"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
 
       - name: Probe Bwin fixtures HTTP status
         env:
@@ -56,25 +63,22 @@ jobs:
         run: |
           set -euo pipefail
           CODE=$(curl -s -o /tmp/bwin_fixtures.json -w "%{http_code}" \
-            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36" \
+            -H "User-Agent: Mozilla/5.0 (Android 13; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0" \
             -H "Accept: application/json, text/plain, */*" \
-            -H "Referer: https://www.bwin.com/en/sports/football-4" \
-            -H "Origin: https://www.bwin.com" \
-            "https://www.bwin.com/cds-api/bettingoffer/fixtures?x-bwin-accessid=${BWIN_ACCESS_ID}&lang=en&country=GB&userCountry=GB&sportIds=4")
+            -H "Accept-Language: ${BWIN_LANG}" \
+            -H "Referer: https://www.bwin.com/${BWIN_LANG}/sports/football-4" \
+            -H "x-bwin-browser-url: https://www.bwin.com/${BWIN_LANG}/sports/football-4" \
+            "https://www.bwin.com/cds-api/bettingoffer/fixtures?x-bwin-accessid=${BWIN_ACCESS_ID}&lang=${BWIN_LANG}&country=${BWIN_COUNTRY}&userCountry=${BWIN_USER_COUNTRY}&sportIds=4")
           echo "Bwin fixtures HTTP status: $CODE"
           echo "Runner IP: $(curl -s https://api.ipify.org || true)"
           head -c 400 /tmp/bwin_fixtures.json || true
           echo
-          if [ "$CODE" = "403" ] || [ "$CODE" = "401" ]; then
-            echo "::warning::Bwin blocked this GitHub Actions IP (HTTP $CODE). Same class of problem as Koyeb."
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Bwin fixtures probe failed with HTTP $CODE"
+            exit 1
           fi
 
       - name: Poll once → Supabase
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           BWIN_ACCESS_ID: ${{ steps.access.outputs.id }}
-          BWIN_SPORT_IDS: "4"
-          BWIN_MAX_FIXTURES: "0"
-          LOG_LEVEL: INFO
         run: odds-intel poll-once
