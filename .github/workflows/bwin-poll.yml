@@ -28,7 +28,8 @@ jobs:
       BWIN_COUNTRY: US
       BWIN_USER_COUNTRY: US
       BWIN_SPORT_IDS: "4"
-      BWIN_MAX_FIXTURES: "0"
+      # Cap for Actions minute budget; raise later when schema is stable
+      BWIN_MAX_FIXTURES: "150"
       LOG_LEVEL: INFO
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
