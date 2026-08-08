@@ -1,0 +1,25 @@
+# Example Koyeb app definition (adjust service name / region in dashboard if needed).
+# Deploy as a Worker (not web). Attach a Postgres database and set env vars.
+name: odds-intel
+services:
+  - name: bwin-worker
+    type: worker
+    instance_type: free
+    env:
+      - key: DATABASE_URL
+        value: "{{ KOYEB_POSTGRES_URL }}"
+      - key: BWIN_ACCESS_ID
+        value: "" # set in Koyeb secrets
+      - key: BWIN_FIXTURE_IDS
+        value: "" # e.g. 2:7823441,2:7823442
+      - key: BWIN_SPORT_IDS
+        value: "4"
+      - key: BWIN_MAX_FIXTURES
+        value: "40"
+      - key: POLL_INTERVAL_SEC
+        value: "30"
+      - key: LOG_LEVEL
+        value: INFO
+    docker:
+      dockerfile: Dockerfile
+    # command defaults to Dockerfile CMD: odds-intel worker
