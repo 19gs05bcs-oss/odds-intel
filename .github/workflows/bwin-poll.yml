@@ -1,5 +1,5 @@
-# Bwin → Supabase poller (GitHub Actions)
-# Job ~5 saat sürekli poll (GHA limit ~6 saat). Cron her 6 saatte bir.
+# Bwin → Supabase poller
+# ~5 saat sürekli poll (GHA limit ~6 saat). Cron her 6 saatte bir.
 #
 # Secrets: SUPABASE_URL, SUPABASE_KEY, BWIN_ACCESS_ID (opsiyonel seed)
 
@@ -7,7 +7,6 @@ name: bwin-poll
 
 on:
   schedule:
-    # Her 6 saat — job ~5h sürer; concurrency çakışmayı engeller
     - cron: "0 */6 * * *"
   workflow_dispatch:
 
@@ -17,22 +16,18 @@ concurrency:
 
 permissions:
   contents: read
-  secrets: write
 
 jobs:
   poll:
     runs-on: ubuntu-latest
-    # GitHub Actions hard cap ~360 dk; 5 saat worker + setup payı
     timeout-minutes: 360
     env:
       BWIN_LANG: en
       BWIN_COUNTRY: US
       BWIN_USER_COUNTRY: US
       BWIN_SPORT_IDS: "4"
-      # 0 = keşfedilen tüm fixture'lar (Actions süresini doldurmak için)
       BWIN_MAX_FIXTURES: "0"
       POLL_INTERVAL_SEC: "60"
-      # 5 saat sürekli poll, sonra temiz çıkış
       WORKER_MAX_RUNTIME_SEC: "18000"
       LOG_LEVEL: INFO
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -53,7 +48,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Scrape + validate access id
+      - name: Resolve working access id
         id: access
         run: |
           set -euo pipefail
@@ -64,20 +59,6 @@ jobs:
           fi
           echo "Resolved access id (len=${#ID})"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
-
-      - name: Update GitHub secret BWIN_ACCESS_ID
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_ID: ${{ steps.access.outputs.id }}
-          OLD_ID: ${{ secrets.BWIN_ACCESS_ID }}
-        run: |
-          set -euo pipefail
-          if [ -n "${OLD_ID:-}" ] && [ "$NEW_ID" = "$OLD_ID" ]; then
-            echo "BWIN_ACCESS_ID secret already up to date"
-            exit 0
-          fi
-          printf '%s' "$NEW_ID" | gh secret set BWIN_ACCESS_ID --repo "$GITHUB_REPOSITORY"
-          echo "BWIN_ACCESS_ID secret updated"
 
       - name: Probe Bwin fixtures HTTP status
         env:

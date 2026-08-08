@@ -1,8 +1,8 @@
-# Bwin access-id kazıyıcı
-# scripts/scrape_bwin_access.py → validate → GitHub secret BWIN_ACCESS_ID güncelle
+# Bwin access-id kazıyıcı (her 6 saat)
+# Not: GITHUB_TOKEN secret yazamaz. Secret güncellemek için opsiyonel
+#      repo secret: GH_PAT (classic token, scope: repo)
 #
-# Schedule: her 6 saat | manuel: Actions → scrape-bwin-access → Run workflow
-# Repo permission: GITHUB_TOKEN secrets: write (aşağıda)
+# Secrets: BWIN_ACCESS_ID (seed), GH_PAT (opsiyonel)
 
 name: scrape-bwin-access
 
@@ -17,7 +17,6 @@ concurrency:
 
 permissions:
   contents: read
-  secrets: write
 
 jobs:
   scrape:
@@ -28,9 +27,7 @@ jobs:
       BWIN_COUNTRY: US
       BWIN_USER_COUNTRY: US
       LOG_LEVEL: INFO
-      # Previous secret as seed (validate first; rediscover if dead)
       BWIN_ACCESS_ID: ${{ secrets.BWIN_ACCESS_ID }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,14 +38,37 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install deps
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install httpx
 
-      - name: Scrape access id + update secret
+      - name: Scrape + validate access id
         id: access
         run: |
           set -euo pipefail
-          python scripts/scrape_bwin_access.py --update-secret
-          echo "done (id len from output step above)"
+          ID="$(python scripts/scrape_bwin_access.py | tr -d '[:space:]')"
+          if [ -z "$ID" ]; then
+            echo "::error::access id scrape returned empty"
+            exit 1
+          fi
+          echo "Resolved access id (len=${#ID})"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Optionally update BWIN_ACCESS_ID secret
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          NEW_ID: ${{ steps.access.outputs.id }}
+          OLD_ID: ${{ secrets.BWIN_ACCESS_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "GH_PAT secret yok — secret guncelleme atlandi (poll yine discover eder)"
+            exit 0
+          fi
+          if [ -n "${OLD_ID:-}" ] && [ "$NEW_ID" = "$OLD_ID" ]; then
+            echo "BWIN_ACCESS_ID already up to date"
+            exit 0
+          fi
+          printf '%s' "$NEW_ID" | gh secret set BWIN_ACCESS_ID --repo "$GITHUB_REPOSITORY"
+          echo "BWIN_ACCESS_ID secret updated via GH_PAT"
