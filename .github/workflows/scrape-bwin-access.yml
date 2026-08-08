@@ -1,0 +1,54 @@
+# Bwin access-id kazıyıcı
+# scripts/scrape_bwin_access.py → validate → GitHub secret BWIN_ACCESS_ID güncelle
+#
+# Schedule: her 6 saat | manuel: Actions → scrape-bwin-access → Run workflow
+# Repo permission: GITHUB_TOKEN secrets: write (aşağıda)
+
+name: scrape-bwin-access
+
+on:
+  schedule:
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scrape-bwin-access
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  secrets: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BWIN_LANG: en
+      BWIN_COUNTRY: US
+      BWIN_USER_COUNTRY: US
+      LOG_LEVEL: INFO
+      # Previous secret as seed (validate first; rediscover if dead)
+      BWIN_ACCESS_ID: ${{ secrets.BWIN_ACCESS_ID }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+
+      - name: Scrape access id + update secret
+        id: access
+        run: |
+          set -euo pipefail
+          python scripts/scrape_bwin_access.py --update-secret
+          echo "done (id len from output step above)"
