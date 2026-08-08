@@ -7,6 +7,11 @@ from typing import Any, Optional
 import httpx
 
 from odds_intel.config import Settings
+from odds_intel.db.markets_blob import (
+    build_markets_blob,
+    flatten_markets_blob,
+    group_quotes_by_event,
+)
 from odds_intel.models import EventSnapshot, ScoreSnapshot, SelectionQuote
 
 logger = logging.getLogger(__name__)
@@ -14,14 +19,6 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _odds_changed(prev: Optional[float], new: Optional[float]) -> bool:
-    if prev is None and new is None:
-        return False
-    if prev is None or new is None:
-        return True
-    return abs(float(prev) - float(new)) > 1e-9
 
 
 class SupabaseRepository:
@@ -174,95 +171,47 @@ class SupabaseRepository:
         )
 
     def apply_quotes(self, quotes: list[SelectionQuote]) -> int:
+        """Store all markets for an event as one JSON blob. History only on change."""
         if not quotes:
             return 0
         now = _utcnow()
         changes = 0
-        for q in quotes:
+        for event_id, event_quotes in group_quotes_by_event(quotes).items():
+            blob, digest, selection_count = build_markets_blob(event_quotes)
+            source = event_quotes[0].source
             rows = self._get(
-                "selections_current",
-                {"id": f"eq.{q.id}", "select": "odds,is_suspended"},
+                "events",
+                {"id": f"eq.{event_id}", "select": "markets_hash"},
             )
-            if not rows:
-                self._insert(
-                    "selections_current",
-                    {
-                        "id": q.id,
-                        "event_id": q.event_id,
-                        "source": q.source,
-                        "market_name": q.market_name,
-                        "market_key": q.market_key,
-                        "selection_name": q.selection_name,
-                        "selection_key": q.selection_key,
-                        "odds": q.odds,
-                        "is_suspended": int(q.is_suspended),
-                        "first_seen_at": now,
-                        "last_seen_at": now,
-                        "last_changed_at": now,
-                        "opening_odds": q.odds,
-                    },
-                )
-                self._insert(
-                    "quote_changes",
-                    {
-                        "event_id": q.event_id,
-                        "selection_id": q.id,
-                        "source": q.source,
-                        "market_key": q.market_key,
-                        "selection_key": q.selection_key,
-                        "odds": q.odds,
-                        "prev_odds": None,
-                        "is_suspended": int(q.is_suspended),
-                        "change_type": "opening",
-                        "captured_at": now,
-                    },
-                )
-                changes += 1
-                continue
-
-            prev_odds = rows[0].get("odds")
-            prev_susp = bool(rows[0].get("is_suspended"))
-            odds_changed = _odds_changed(prev_odds, q.odds)
-            susp_changed = prev_susp != q.is_suspended
-            if not odds_changed and not susp_changed:
+            prev_hash = rows[0].get("markets_hash") if rows else None
+            if prev_hash == digest:
                 self._patch(
-                    "selections_current",
-                    {"id": f"eq.{q.id}"},
-                    {"last_seen_at": now},
+                    "events",
+                    {"id": f"eq.{event_id}"},
+                    {"updated_at": now},
                 )
                 continue
 
-            change_type = (
-                "odds"
-                if odds_changed and not susp_changed
-                else "suspend"
-                if susp_changed and not odds_changed
-                else "odds_and_suspend"
-            )
+            change_type = "opening" if not prev_hash else "update"
             self._patch(
-                "selections_current",
-                {"id": f"eq.{q.id}"},
+                "events",
+                {"id": f"eq.{event_id}"},
                 {
-                    "odds": q.odds,
-                    "is_suspended": int(q.is_suspended),
-                    "last_seen_at": now,
-                    "last_changed_at": now,
-                    "market_name": q.market_name,
-                    "selection_name": q.selection_name,
+                    "markets_json": blob,
+                    "markets_hash": digest,
+                    "odds_updated_at": now,
+                    "updated_at": now,
                 },
             )
             self._insert(
-                "quote_changes",
+                "event_odds_history",
                 {
-                    "event_id": q.event_id,
-                    "selection_id": q.id,
-                    "source": q.source,
-                    "market_key": q.market_key,
-                    "selection_key": q.selection_key,
-                    "odds": q.odds,
-                    "prev_odds": prev_odds,
-                    "is_suspended": int(q.is_suspended),
+                    "event_id": event_id,
+                    "source": source,
+                    "markets_json": blob,
+                    "markets_hash": digest,
                     "change_type": change_type,
+                    "selection_count": selection_count,
                     "captured_at": now,
                 },
             )
@@ -339,21 +288,24 @@ class SupabaseRepository:
         )
 
     def latest_quotes(self, event_id: str) -> list[Any]:
-        return self._get(
-            "selections_current",
-            {
-                "event_id": f"eq.{event_id}",
-                "select": "market_name,selection_name,odds,is_suspended,opening_odds,last_changed_at",
-                "order": "market_name.asc,selection_name.asc",
-            },
+        rows = self._get(
+            "events",
+            {"id": f"eq.{event_id}", "select": "markets_json,odds_updated_at"},
         )
+        if not rows:
+            return []
+        flat = flatten_markets_blob(rows[0].get("markets_json"))
+        updated = rows[0].get("odds_updated_at")
+        for row in flat:
+            row["last_changed_at"] = updated
+        return flat
 
     def quote_history(self, event_id: str, limit: int = 50) -> list[Any]:
         return self._get(
-            "quote_changes",
+            "event_odds_history",
             {
                 "event_id": f"eq.{event_id}",
-                "select": "market_key,selection_key,prev_odds,odds,change_type,captured_at",
+                "select": "change_type,selection_count,markets_hash,captured_at",
                 "order": "id.desc",
                 "limit": str(limit),
             },

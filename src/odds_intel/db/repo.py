@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
+from odds_intel.db.markets_blob import (
+    build_markets_blob,
+    flatten_markets_blob,
+    group_quotes_by_event,
+)
 from odds_intel.models import EventSnapshot, ScoreSnapshot, SelectionQuote
 
 
@@ -128,114 +134,50 @@ class Repository:
         self.db.commit()
 
     def apply_quotes(self, quotes: list[SelectionQuote]) -> int:
-        """Persist only real odds/status changes. Returns number of change rows written."""
+        """Store all markets for an event as one JSON blob. History only on change."""
         if not quotes:
             return 0
         now = _utcnow()
         changes = 0
-        for q in quotes:
-            if q.odds is not None and q.odds <= 1.001:
-                # placeholder / void-looking prices — still track if status flips, else skip noise
-                pass
-
+        for event_id, event_quotes in group_quotes_by_event(quotes).items():
+            blob, digest, selection_count = build_markets_blob(event_quotes)
+            source = event_quotes[0].source
             rows = self.db.fetches(
-                "SELECT odds, is_suspended FROM selections_current WHERE id = ?",
-                (q.id,),
+                "SELECT markets_hash FROM events WHERE id = ?",
+                (event_id,),
             )
-            if not rows:
+            prev_hash = _row_get(rows[0], "markets_hash") if rows else None
+            if prev_hash == digest:
                 self.db.execute(
-                    """
-                    INSERT INTO selections_current(
-                        id, event_id, source, market_name, market_key,
-                        selection_name, selection_key, odds, is_suspended,
-                        first_seen_at, last_seen_at, last_changed_at, opening_odds
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        q.id,
-                        q.event_id,
-                        q.source,
-                        q.market_name,
-                        q.market_key,
-                        q.selection_name,
-                        q.selection_key,
-                        q.odds,
-                        int(q.is_suspended),
-                        now,
-                        now,
-                        now,
-                        q.odds,
-                    ),
-                )
-                self.db.execute(
-                    """
-                    INSERT INTO quote_changes(
-                        event_id, selection_id, source, market_key, selection_key,
-                        odds, prev_odds, is_suspended, change_type, captured_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'opening', ?)
-                    """,
-                    (
-                        q.event_id,
-                        q.id,
-                        q.source,
-                        q.market_key,
-                        q.selection_key,
-                        q.odds,
-                        int(q.is_suspended),
-                        now,
-                    ),
-                )
-                changes += 1
-                continue
-
-            prev_odds = _row_get(rows[0], "odds")
-            prev_susp = bool(_row_get(rows[0], "is_suspended"))
-            odds_changed = _odds_changed(prev_odds, q.odds)
-            susp_changed = prev_susp != q.is_suspended
-            if not odds_changed and not susp_changed:
-                self.db.execute(
-                    "UPDATE selections_current SET last_seen_at = ? WHERE id = ?",
-                    (now, q.id),
+                    "UPDATE events SET updated_at = ? WHERE id = ?",
+                    (now, event_id),
                 )
                 continue
 
-            change_type = "odds" if odds_changed and not susp_changed else (
-                "suspend" if susp_changed and not odds_changed else "odds_and_suspend"
-            )
+            change_type = "opening" if not prev_hash else "update"
+            payload = json.dumps(blob, ensure_ascii=False)
             self.db.execute(
                 """
-                UPDATE selections_current
-                SET odds = ?, is_suspended = ?, last_seen_at = ?, last_changed_at = ?,
-                    market_name = ?, selection_name = ?
+                UPDATE events
+                SET markets_json = ?, markets_hash = ?, odds_updated_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (
-                    q.odds,
-                    int(q.is_suspended),
-                    now,
-                    now,
-                    q.market_name,
-                    q.selection_name,
-                    q.id,
-                ),
+                (payload, digest, now, now, event_id),
             )
             self.db.execute(
                 """
-                INSERT INTO quote_changes(
-                    event_id, selection_id, source, market_key, selection_key,
-                    odds, prev_odds, is_suspended, change_type, captured_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO event_odds_history(
+                    event_id, source, markets_json, markets_hash,
+                    change_type, selection_count, captured_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    q.event_id,
-                    q.id,
-                    q.source,
-                    q.market_key,
-                    q.selection_key,
-                    q.odds,
-                    prev_odds,
-                    int(q.is_suspended),
+                    event_id,
+                    source,
+                    payload,
+                    digest,
                     change_type,
+                    selection_count,
                     now,
                 ),
             )
@@ -315,32 +257,26 @@ class Repository:
         self.db.commit()
 
     def latest_quotes(self, event_id: str) -> list[Any]:
-        return self.db.fetches(
-            """
-            SELECT market_name, selection_name, odds, is_suspended, opening_odds, last_changed_at
-            FROM selections_current
-            WHERE event_id = ?
-            ORDER BY market_name, selection_name
-            """,
+        rows = self.db.fetches(
+            "SELECT markets_json, odds_updated_at FROM events WHERE id = ?",
             (event_id,),
         )
+        if not rows:
+            return []
+        flat = flatten_markets_blob(_row_get(rows[0], "markets_json"))
+        updated = _row_get(rows[0], "odds_updated_at")
+        for row in flat:
+            row["last_changed_at"] = updated
+        return flat
 
     def quote_history(self, event_id: str, limit: int = 50) -> list[Any]:
         return self.db.fetches(
             """
-            SELECT market_key, selection_key, prev_odds, odds, change_type, captured_at
-            FROM quote_changes
+            SELECT change_type, selection_count, markets_hash, captured_at
+            FROM event_odds_history
             WHERE event_id = ?
             ORDER BY id DESC
             LIMIT ?
             """,
             (event_id, limit),
         )
-
-
-def _odds_changed(prev: Optional[float], new: Optional[float]) -> bool:
-    if prev is None and new is None:
-        return False
-    if prev is None or new is None:
-        return True
-    return abs(float(prev) - float(new)) > 1e-9

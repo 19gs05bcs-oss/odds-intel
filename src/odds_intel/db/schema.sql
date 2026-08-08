@@ -1,4 +1,4 @@
--- Phase 1 schema: events, current quotes, change-only history, scores
+-- Phase 1 schema: events with markets JSON + change-only history, scores
 
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
@@ -13,47 +13,27 @@ CREATE TABLE IF NOT EXISTS events (
     opening_captured_at TEXT,
     closing_captured_at TEXT,
     is_closed INTEGER NOT NULL DEFAULT 0,
+    markets_json TEXT,
+    markets_hash TEXT,
+    odds_updated_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (source, source_event_id)
 );
 
-CREATE TABLE IF NOT EXISTS selections_current (
-    id TEXT PRIMARY KEY,
-    event_id TEXT NOT NULL REFERENCES events(id),
-    source TEXT NOT NULL,
-    market_name TEXT NOT NULL,
-    market_key TEXT NOT NULL,
-    selection_name TEXT NOT NULL,
-    selection_key TEXT NOT NULL,
-    odds REAL,
-    is_suspended INTEGER NOT NULL DEFAULT 0,
-    first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    last_changed_at TEXT NOT NULL,
-    opening_odds REAL,
-    UNIQUE (event_id, market_key, selection_key)
-);
-
-CREATE TABLE IF NOT EXISTS quote_changes (
+CREATE TABLE IF NOT EXISTS event_odds_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT NOT NULL,
-    selection_id TEXT NOT NULL,
     source TEXT NOT NULL,
-    market_key TEXT NOT NULL,
-    selection_key TEXT NOT NULL,
-    odds REAL,
-    prev_odds REAL,
-    is_suspended INTEGER NOT NULL DEFAULT 0,
+    markets_json TEXT NOT NULL,
+    markets_hash TEXT NOT NULL,
     change_type TEXT NOT NULL,
+    selection_count INTEGER NOT NULL DEFAULT 0,
     captured_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_quote_changes_event_time
-    ON quote_changes(event_id, captured_at);
-
-CREATE INDEX IF NOT EXISTS idx_quote_changes_selection_time
-    ON quote_changes(selection_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_event_odds_history_event_time
+    ON event_odds_history(event_id, captured_at);
 
 CREATE TABLE IF NOT EXISTS score_changes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

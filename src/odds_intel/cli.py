@@ -94,7 +94,7 @@ def show_event_cmd(event_id: str) -> None:
     table.add_column("Market")
     table.add_column("Selection")
     table.add_column("Odds")
-    table.add_column("Open")
+    table.add_column("Susp")
     table.add_column("Changed")
     for row in quotes:
         get = row.get if isinstance(row, dict) else row.__getitem__
@@ -102,27 +102,23 @@ def show_event_cmd(event_id: str) -> None:
             str(get("market_name")),
             str(get("selection_name")),
             str(get("odds")),
-            str(get("opening_odds")),
+            str(get("is_suspended")),
             str(get("last_changed_at")),
         )
     console.print(table)
 
-    htable = Table(title="Recent quote changes")
+    htable = Table(title="Odds snapshot history (JSON blobs)")
     htable.add_column("When")
-    htable.add_column("Market")
-    htable.add_column("Sel")
-    htable.add_column("Prev")
-    htable.add_column("New")
     htable.add_column("Type")
+    htable.add_column("Selections")
+    htable.add_column("Hash")
     for row in history:
         get = row.get if isinstance(row, dict) else row.__getitem__
         htable.add_row(
             str(get("captured_at")),
-            str(get("market_key")),
-            str(get("selection_key")),
-            str(get("prev_odds")),
-            str(get("odds")),
             str(get("change_type")),
+            str(get("selection_count")),
+            str(get("markets_hash"))[:12],
         )
     console.print(htable)
 

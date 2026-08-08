@@ -56,7 +56,7 @@ def test_parse_and_change_only(tmp_path: Path) -> None:
 
     repo.upsert_event(event)
     c1 = repo.apply_quotes(quotes)
-    assert c1 == len(quotes)  # all openings
+    assert c1 == 1  # one event blob (opening)
     assert repo.apply_score(score) is True
 
     # second identical poll → no quote/score changes
@@ -75,7 +75,9 @@ def test_parse_and_change_only(tmp_path: Path) -> None:
     history = repo.quote_history(event.id, limit=10)
     types = [h["change_type"] if isinstance(h, dict) else h["change_type"] for h in history]
     assert "opening" in types
-    assert "odds" in types
+    assert "update" in types
+    latest = repo.latest_quotes(event.id)
+    assert any(r.get("odds") == 1.33 for r in latest)
 
     # final score
     finished = json.loads(json.dumps(SAMPLE))
