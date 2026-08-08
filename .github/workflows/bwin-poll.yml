@@ -1,39 +1,42 @@
 # Bwin → Supabase poller (GitHub Actions)
+# Job ~5 saat sürekli poll (GHA limit ~6 saat). Cron her 6 saatte bir.
 #
-# Secrets (optional but recommended fallback):
-#   SUPABASE_URL
-#   SUPABASE_KEY
-#   BWIN_ACCESS_ID   # optional; job rediscovers/validates if missing/invalid
-#
-# Locale/env are set below (US works with current access id).
+# Secrets: SUPABASE_URL, SUPABASE_KEY, BWIN_ACCESS_ID (opsiyonel seed)
 
 name: bwin-poll
 
 on:
   schedule:
-    # Every 12 hours UTC — change if needed
-    - cron: "0 */12 * * *"
+    # Her 6 saat — job ~5h sürer; concurrency çakışmayı engeller
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 concurrency:
   group: bwin-poll
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  secrets: write
+
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # GitHub Actions hard cap ~360 dk; 5 saat worker + setup payı
+    timeout-minutes: 360
     env:
       BWIN_LANG: en
       BWIN_COUNTRY: US
       BWIN_USER_COUNTRY: US
       BWIN_SPORT_IDS: "4"
-      # Cap for Actions minute budget; raise later when schema is stable
-      BWIN_MAX_FIXTURES: "150"
+      # 0 = keşfedilen tüm fixture'lar (Actions süresini doldurmak için)
+      BWIN_MAX_FIXTURES: "0"
+      POLL_INTERVAL_SEC: "60"
+      # 5 saat sürekli poll, sonra temiz çıkış
+      WORKER_MAX_RUNTIME_SEC: "18000"
       LOG_LEVEL: INFO
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      # Optional seed; code validates and rediscovers if invalid
       BWIN_ACCESS_ID: ${{ secrets.BWIN_ACCESS_ID }}
     steps:
       - name: Checkout
@@ -50,13 +53,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Resolve working access id
+      - name: Scrape + validate access id
         id: access
         run: |
           set -euo pipefail
-          ID="$(odds-intel discover-access-id)"
+          ID="$(odds-intel discover-access-id | tr -d '[:space:]')"
+          if [ -z "$ID" ]; then
+            echo "::error::access id scrape returned empty"
+            exit 1
+          fi
           echo "Resolved access id (len=${#ID})"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Update GitHub secret BWIN_ACCESS_ID
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_ID: ${{ steps.access.outputs.id }}
+          OLD_ID: ${{ secrets.BWIN_ACCESS_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OLD_ID:-}" ] && [ "$NEW_ID" = "$OLD_ID" ]; then
+            echo "BWIN_ACCESS_ID secret already up to date"
+            exit 0
+          fi
+          printf '%s' "$NEW_ID" | gh secret set BWIN_ACCESS_ID --repo "$GITHUB_REPOSITORY"
+          echo "BWIN_ACCESS_ID secret updated"
 
       - name: Probe Bwin fixtures HTTP status
         env:
@@ -79,7 +100,7 @@ jobs:
             exit 1
           fi
 
-      - name: Poll once → Supabase
+      - name: Poll ~5h → Supabase
         env:
           BWIN_ACCESS_ID: ${{ steps.access.outputs.id }}
-        run: odds-intel poll-once
+        run: odds-intel worker --max-runtime-sec "${WORKER_MAX_RUNTIME_SEC}"
