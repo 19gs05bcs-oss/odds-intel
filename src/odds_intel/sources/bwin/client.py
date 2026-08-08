@@ -166,35 +166,49 @@ class BwinClient:
 
 
 def _extract_fixture_ids(payload: Any) -> list[str]:
+    """Keep only real match fixtures (2 participants), not sport/comp/special ids."""
     found: list[str] = []
     seen: set[str] = set()
 
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            fid = node.get("id")
-            if isinstance(fid, (int, float)):
-                fid = str(int(fid))
-            if isinstance(fid, str) and (fid.startswith("2:") or fid.isdigit()):
-                looks_like_fixture = any(
-                    key in node
-                    for key in (
-                        "participants",
-                        "stage",
-                        "startDate",
-                        "startTime",
-                        "competition",
-                        "sport",
-                        "name",
-                    )
-                )
-                if looks_like_fixture and fid not in seen:
-                    seen.add(fid)
-                    found.append(fid)
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+    fixtures = payload.get("fixtures") if isinstance(payload, dict) else None
+    if not isinstance(fixtures, list):
+        # rare envelopes
+        fixtures = []
+        if isinstance(payload, dict):
+            for key in ("items", "data", "result"):
+                node = payload.get(key)
+                if isinstance(node, list):
+                    fixtures = node
+                    break
+                if isinstance(node, dict) and isinstance(node.get("fixtures"), list):
+                    fixtures = node["fixtures"]
+                    break
 
-    walk(payload)
+    for node in fixtures:
+        if not isinstance(node, dict):
+            continue
+        fid = node.get("id")
+        if isinstance(fid, (int, float)):
+            fid = str(int(fid))
+        if not isinstance(fid, str) or not fid:
+            continue
+        # skip tiny ids (sport/region noise like "4", "6")
+        if fid.isdigit() and len(fid) < 5:
+            continue
+        parts = node.get("participants") or []
+        if not isinstance(parts, list) or len(parts) < 2:
+            continue
+        name = ""
+        raw_name = node.get("name")
+        if isinstance(raw_name, dict):
+            name = str(raw_name.get("value") or "")
+        elif isinstance(raw_name, str):
+            name = raw_name
+        lowered = name.lower()
+        if any(tok in lowered for tok in ("acca", "enhanced", "special", "boost", "bet builder")):
+            continue
+        if fid in seen:
+            continue
+        seen.add(fid)
+        found.append(fid)
     return found
