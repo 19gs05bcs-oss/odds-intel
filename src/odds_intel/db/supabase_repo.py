@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -7,6 +8,8 @@ import httpx
 
 from odds_intel.config import Settings
 from odds_intel.models import EventSnapshot, ScoreSnapshot, SelectionQuote
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:
@@ -89,8 +92,18 @@ class SupabaseRepository:
         self._raise_for_status(resp, table)
 
     def start_poll_run(self, source: str) -> int:
-        rows = self._insert("poll_runs", {"source": source, "started_at": _utcnow()})
-        return int(rows[0]["id"])
+        try:
+            rows = self._insert("poll_runs", {"source": source, "started_at": _utcnow()})
+            return int(rows[0]["id"])
+        except RuntimeError as exc:
+            # Don't block odds ingestion if metadata table is missing
+            if "poll_runs" in str(exc) and "404" in str(exc):
+                logger.warning(
+                    "poll_runs table missing — continuing without run log. "
+                    "Run supabase/schema.sql on the SAME project as SUPABASE_URL."
+                )
+                return 0
+            raise
 
     def finish_poll_run(
         self,
@@ -102,18 +115,26 @@ class SupabaseRepository:
         error_count: int,
         notes: str = "",
     ) -> None:
-        self._patch(
-            "poll_runs",
-            {"id": f"eq.{run_id}"},
-            {
-                "finished_at": _utcnow(),
-                "fixtures_polled": fixtures_polled,
-                "quote_changes": quote_changes,
-                "score_changes": score_changes,
-                "error_count": error_count,
-                "notes": notes,
-            },
-        )
+        if run_id <= 0:
+            return
+        try:
+            self._patch(
+                "poll_runs",
+                {"id": f"eq.{run_id}"},
+                {
+                    "finished_at": _utcnow(),
+                    "fixtures_polled": fixtures_polled,
+                    "quote_changes": quote_changes,
+                    "score_changes": score_changes,
+                    "error_count": error_count,
+                    "notes": notes,
+                },
+            )
+        except RuntimeError as exc:
+            if "poll_runs" in str(exc):
+                logger.warning("finish_poll_run skipped: %s", exc)
+                return
+            raise
 
     def upsert_event(self, event: EventSnapshot) -> None:
         now = _utcnow()
