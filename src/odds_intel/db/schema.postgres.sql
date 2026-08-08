@@ -89,3 +89,8 @@ CREATE INDEX IF NOT EXISTS idx_selections_current_event
 
 CREATE INDEX IF NOT EXISTS idx_events_source_kickoff
     ON events(source, kickoff_at);
+
+-- Expose to PostgREST (usually automatic for public); reload API cache
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+NOTIFY pgrst, 'reload schema';

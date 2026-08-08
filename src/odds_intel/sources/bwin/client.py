@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 import httpx
@@ -8,6 +9,28 @@ from odds_intel.config import Settings
 from odds_intel.sources.bwin.access_id import resolve_access_id
 
 SOURCE = "bwin"
+logger = logging.getLogger(__name__)
+
+
+def _browser_headers(settings: Settings) -> dict[str, str]:
+    base = settings.bwin_base_url.rstrip("/")
+    referer = f"{base}/{settings.bwin_lang}/sports/football-4"
+    headers = {
+        # Mobile UA matches working cds-api calls from EC2
+        "User-Agent": (
+            "Mozilla/5.0 (Android 13; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": settings.bwin_lang,
+        "Origin": base,
+        "Referer": referer,
+        "x-bwin-browser-url": referer,
+        "X-Device-Type": "phone_Android",
+        "X-From-Product": "host-app",
+    }
+    if settings.bwin_cookie.strip():
+        headers["Cookie"] = settings.bwin_cookie.strip()
+    return headers
 
 
 class BwinClient:
@@ -15,16 +38,13 @@ class BwinClient:
         self.settings = settings
         self._access_id: Optional[str] = None
         self._owns_client = client is None
+        proxy = settings.bwin_proxy_url.strip() or None
         self.client = client or httpx.Client(
             base_url=settings.bwin_base_url.rstrip("/"),
             timeout=settings.request_timeout_sec,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:128.0) "
-                    "Gecko/20100101 Firefox/128.0"
-                ),
-                "Accept": "application/json",
-            },
+            headers=_browser_headers(settings),
+            proxy=proxy,
+            follow_redirects=True,
         )
 
     def close(self) -> None:
@@ -43,6 +63,9 @@ class BwinClient:
         self._access_id = resolve_access_id(
             self.settings.bwin_access_id,
             base_url=self.settings.bwin_base_url,
+            lang=self.settings.bwin_lang,
+            country=self.settings.bwin_country,
+            user_country=self.settings.bwin_user_country,
         )
         return self._access_id
 
@@ -54,14 +77,43 @@ class BwinClient:
             "userCountry": self.settings.bwin_user_country,
         }
 
+    def _get_json(self, path: str, params: dict[str, Any]) -> Any:
+        # Prefer access id as header too (some edges care)
+        headers = {"x-bwin-accessid": self._require_access_id()}
+        resp = self.client.get(path, params=params, headers=headers)
+        if resp.status_code == 403:
+            body = (resp.text or "")[:300].replace("\n", " ")
+            raise RuntimeError(
+                "Bwin returned 403 Forbidden — almost always datacenter/VPN IP block "
+                "(Koyeb/cloud often blocked). Run the worker on a residential/VPS IP "
+                "that can open bwin.com in a browser, or set BWIN_PROXY_URL. "
+                f"body={body!r}"
+            )
+        resp.raise_for_status()
+        return resp.json()
+
     def list_fixtures(self, sport_id: int, max_fixtures: int | None = None) -> list[str]:
-        """Discover all fixture ids for a sport (paginated). max_fixtures<=0 → no cap."""
+        """Discover fixture ids for a sport. Tries simple HAR-style call first."""
         limit = self.settings.bwin_max_fixtures if max_fixtures is None else max_fixtures
         page_size = max(1, self.settings.bwin_fixtures_page_size)
-        found: list[str] = []
+
+        # 1) Simple request matching browser HAR (most reliable)
+        simple = {
+            **self._common_params(),
+            "sportIds": sport_id,
+        }
+        payload = self._get_json("/cds-api/bettingoffer/fixtures", simple)
+        found = _extract_fixture_ids(payload)
+        if found:
+            logger.info("fixtures simple listing returned %s ids", len(found))
+            if limit > 0:
+                return found[:limit]
+            return found
+
+        # 2) Paginated fallback
+        found = []
         seen: set[str] = set()
         skip = 0
-
         while True:
             if limit > 0 and len(found) >= limit:
                 break
@@ -74,23 +126,11 @@ class BwinClient:
                 "take": page_size,
                 "skip": skip,
             }
-            resp = self.client.get("/cds-api/bettingoffer/fixtures", params=params)
-            resp.raise_for_status()
-            page_ids = _extract_fixture_ids(resp.json())
+            page_ids = _extract_fixture_ids(
+                self._get_json("/cds-api/bettingoffer/fixtures", params)
+            )
             if not page_ids:
-                # some regions ignore skip/take — one unpaginated call then stop
-                if skip == 0:
-                    params.pop("take", None)
-                    params.pop("skip", None)
-                    resp = self.client.get("/cds-api/bettingoffer/fixtures", params=params)
-                    resp.raise_for_status()
-                    page_ids = _extract_fixture_ids(resp.json())
-                    for fid in page_ids:
-                        if fid not in seen:
-                            seen.add(fid)
-                            found.append(fid)
                 break
-
             new_on_page = 0
             for fid in page_ids:
                 if fid in seen:
@@ -100,11 +140,9 @@ class BwinClient:
                 new_on_page += 1
                 if limit > 0 and len(found) >= limit:
                     break
-
             if new_on_page == 0:
                 break
             skip += page_size
-            # safety: avoid infinite loop if API ignores skip
             if skip > 20_000:
                 break
 
@@ -124,9 +162,7 @@ class BwinClient:
             "useRegionalisedConfiguration": "true",
             "statisticsModes": "None",
         }
-        resp = self.client.get("/cds-api/bettingoffer/fixture-view", params=params)
-        resp.raise_for_status()
-        return resp.json()
+        return self._get_json("/cds-api/bettingoffer/fixture-view", params)
 
 
 def _extract_fixture_ids(payload: Any) -> list[str]:

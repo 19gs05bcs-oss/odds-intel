@@ -11,7 +11,13 @@ services:
       - key: SUPABASE_KEY
         value: ""
       - key: BWIN_ACCESS_ID
-        value: ""
+        value: "" # optional seed; rediscovered if invalid
+      - key: BWIN_LANG
+        value: "en"
+      - key: BWIN_COUNTRY
+        value: "US"
+      - key: BWIN_USER_COUNTRY
+        value: "US"
       - key: BWIN_SPORT_IDS
         value: "4"
       - key: BWIN_MAX_FIXTURES

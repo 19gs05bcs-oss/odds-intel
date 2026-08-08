@@ -104,17 +104,30 @@ def run_forever(settings: Optional[Settings] = None) -> None:
     settings = settings or get_settings()
     backend = "supabase-rest" if settings.uses_supabase_rest else settings.database_url
     logger.info(
-        "starting bwin poller interval=%ss backend=%s sports=%s",
+        "starting bwin poller interval=%ss backend=%s sports=%s "
+        "supabase_url=%s bwin_access_id=%s proxy=%s",
         settings.poll_interval_sec,
         backend,
         settings.bwin_sport_ids,
+        "set" if settings.supabase_url else "MISSING",
+        "set" if settings.bwin_access_id else "MISSING",
+        "set" if settings.bwin_proxy_url else "none",
     )
+    if not settings.bwin_access_id:
+        logger.warning(
+            "BWIN_ACCESS_ID empty in process env — set it on the worker service, "
+            "then Save and Deploy"
+        )
     while True:
         started = time.time()
+        blocked = False
         try:
             poll_once(settings)
-        except Exception:
+        except Exception as exc:
             logger.exception("poll_once crashed")
+            blocked = "403" in str(exc) or "Forbidden" in str(exc)
         elapsed = time.time() - started
-        sleep_for = max(1.0, settings.poll_interval_sec - elapsed)
+        # Back off hard on IP blocks so we don't hammer Bwin every 30s
+        interval = 300.0 if blocked else settings.poll_interval_sec
+        sleep_for = max(1.0, interval - elapsed)
         time.sleep(sleep_for)

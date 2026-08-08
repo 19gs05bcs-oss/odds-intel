@@ -44,9 +44,22 @@ class SupabaseRepository:
         if self._owns:
             self.client.close()
 
+    def _raise_for_status(self, resp: httpx.Response, table: str) -> None:
+        if resp.status_code == 404:
+            raise RuntimeError(
+                f"Supabase table '{table}' not found (HTTP 404). "
+                "Run supabase/schema.sql once in Supabase SQL Editor, then retry."
+            )
+        if resp.status_code in (401, 403):
+            raise RuntimeError(
+                f"Supabase auth failed for '{table}' (HTTP {resp.status_code}). "
+                "Use the service_role/secret key, not the anon key."
+            )
+        resp.raise_for_status()
+
     def _get(self, table: str, params: dict[str, str]) -> list[dict[str, Any]]:
         resp = self.client.get(f"{self.base}/{table}", params=params)
-        resp.raise_for_status()
+        self._raise_for_status(resp, table)
         data = resp.json()
         return data if isinstance(data, list) else []
 
@@ -57,7 +70,7 @@ class SupabaseRepository:
             headers={"Prefer": "resolution=merge-duplicates,return=representation"},
             json=row,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp, table)
         data = resp.json()
         return data if isinstance(data, list) else []
 
@@ -67,13 +80,13 @@ class SupabaseRepository:
             headers={"Prefer": "return=representation"},
             json=row,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp, table)
         data = resp.json()
         return data if isinstance(data, list) else []
 
     def _patch(self, table: str, match: dict[str, str], row: dict[str, Any]) -> None:
         resp = self.client.patch(f"{self.base}/{table}", params=match, json=row)
-        resp.raise_for_status()
+        self._raise_for_status(resp, table)
 
     def start_poll_run(self, source: str) -> int:
         rows = self._insert("poll_runs", {"source": source, "started_at": _utcnow()})

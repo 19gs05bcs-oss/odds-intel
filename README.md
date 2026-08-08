@@ -82,7 +82,16 @@ Fixture allow-list yok: `BWIN_SPORT_IDS=4` ile **tüm futbol maçları** keşfed
 
 Manuel tetik: Actions → `bwin-poll` → Run workflow.
 
-Sürekli / düşük latency için Koyeb worker hâlâ daha doğru; GHA yedek/poll içindir.
+### Bwin 403 Forbidden (Koyeb)
+
+Access id doğru olsa bile Bwin sıkça **cloud/datacenter IP** engeller. Belirtiler: fixtures `403`.
+
+Seçenekler:
+1. Worker’ı Bwin’in açıldığı IP’de çalıştır (senin EC2 gibi)
+2. `BWIN_PROXY_URL` ile o IP üzerinden proxy
+3. Koyeb’de tutup sadece Supabase yazımı bırakmak yetmez — çekim yapan host unblock olmalı
+
+Sürekli / düşük latency için çalışan IP’de worker; GHA yedek/poll içindir.
 
 ## Koyeb
 

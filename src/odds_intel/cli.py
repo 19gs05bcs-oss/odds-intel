@@ -46,12 +46,18 @@ def migrate_cmd() -> None:
 
 @app.command("discover-access-id")
 def discover_access_id_cmd() -> None:
-    """Fetch Bwin sports page and print public x-bwin-accessid if found."""
+    """Discover + validate a working x-bwin-accessid (prints the id)."""
     _setup_logging()
     settings = get_settings()
-    found = discover_access_id(base_url=settings.bwin_base_url)
+    found = discover_access_id(
+        base_url=settings.bwin_base_url,
+        lang=settings.bwin_lang,
+        country=settings.bwin_country,
+        user_country=settings.bwin_user_country,
+        extra_candidates=[settings.bwin_access_id] if settings.bwin_access_id else [],
+    )
     if not found:
-        console.print("[red]access id not found[/red]")
+        console.print("[red]working access id not found[/red]")
         raise typer.Exit(1)
     console.print(found)
 
