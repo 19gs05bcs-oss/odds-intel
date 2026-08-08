@@ -47,9 +47,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 cp .env.example .env
-# fill DATABASE_URL (Supabase) + BWIN_ACCESS_ID + BWIN_FIXTURE_IDS
+# fill SUPABASE_URL + SUPABASE_KEY (+ optional BWIN_ACCESS_ID)
 odds-intel migrate
-odds-intel poll-once
+odds-intel poll-once   # discovers ALL fixtures for BWIN_SPORT_IDS
 odds-intel worker
 ```
 
@@ -60,6 +60,30 @@ odds-intel ingest-file ./bwin_offers.json
 odds-intel show-event bwin:2:7823441
 ```
 
+## GitHub Actions cron
+
+Workflow: `.github/workflows/bwin-poll.yml`
+
+| Limit | Değer |
+|---|---|
+| En sık cron | **5 dk** (`*/5 * * * *`) — GitHub minimum |
+| Bizim default | **15 dk** (`*/15 * * * *`) |
+| Job timeout | default 6 saat; workflow’da **10 dk** cap |
+| Gecikme | yüksek yükde schedule gecikebilir (best-effort) |
+| Private repo dakika | Free planda aylık kota var; 5 dk’da bir koşmak hızla bitirir |
+
+Repo → **Settings → Secrets and variables → Actions**:
+
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
+- `BWIN_ACCESS_ID` (opsiyonel; yoksa workflow `discover-access-id` dener)
+
+Fixture allow-list yok: `BWIN_SPORT_IDS=4` ile **tüm futbol maçları** keşfedilir (`BWIN_MAX_FIXTURES=0`).
+
+Manuel tetik: Actions → `bwin-poll` → Run workflow.
+
+Sürekli / düşük latency için Koyeb worker hâlâ daha doğru; GHA yedek/poll içindir.
+
 ## Koyeb
 
 Env (acoreapi gibi):
@@ -69,7 +93,8 @@ Env (acoreapi gibi):
 | `SUPABASE_URL` | `https://xxxx.supabase.co` |
 | `SUPABASE_KEY` | service_role / secret |
 | `BWIN_ACCESS_ID` | Bwin `x-bwin-accessid` |
-| `BWIN_FIXTURE_IDS` | başlangıçta dar tut |
+| `BWIN_SPORT_IDS` | `4` (futbol; tüm maçlar) |
+| `BWIN_MAX_FIXTURES` | `0` (limitsiz) |
 
 Service type: **Worker**, CMD: `odds-intel worker`  
 Repo’da `src/` klasörü olmak zorunda (Docker `COPY src ./src`).

@@ -12,9 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_fixture_ids(settings: Settings, client: BwinClient) -> list[str]:
+    """Default: discover every fixture for configured sports. Optional allow-list override."""
     explicit = settings.fixture_id_list()
     if explicit:
+        logger.warning(
+            "BWIN_FIXTURE_IDS set (%s ids) — using allow-list override, not full discovery",
+            len(explicit),
+        )
         return explicit
+
     ids: list[str] = []
     for sport_id in settings.sport_id_list():
         try:
@@ -23,13 +29,17 @@ def resolve_fixture_ids(settings: Settings, client: BwinClient) -> list[str]:
             ids.extend(found)
         except Exception:
             logger.exception("failed listing fixtures for sport %s", sport_id)
+
     seen: set[str] = set()
     out: list[str] = []
     for fid in ids:
         if fid not in seen:
             seen.add(fid)
             out.append(fid)
-    return out[: settings.bwin_max_fixtures]
+
+    if settings.bwin_max_fixtures > 0:
+        return out[: settings.bwin_max_fixtures]
+    return out
 
 
 def poll_once(settings: Optional[Settings] = None) -> dict[str, int]:
@@ -46,7 +56,8 @@ def poll_once(settings: Optional[Settings] = None) -> dict[str, int]:
         with BwinClient(settings) as client:
             fixture_ids = resolve_fixture_ids(settings, client)
             if not fixture_ids:
-                logger.warning("no fixture ids to poll; set BWIN_FIXTURE_IDS or discovery")
+                logger.warning("no fixtures discovered for sports=%s", settings.bwin_sport_ids)
+            logger.info("polling %s fixtures", len(fixture_ids))
             for fixture_id in fixture_ids:
                 try:
                     payload = client.fixture_view(fixture_id)
@@ -63,13 +74,8 @@ def poll_once(settings: Optional[Settings] = None) -> dict[str, int]:
                     if not quotes and any(t in stage for t in ("finished", "ended", "closed")):
                         repo.mark_event_closed(event.id, event.status or "Closed")
                     fixtures_polled += 1
-                    logger.info(
-                        "polled %s (%s vs %s) quotes=%s",
-                        event.source_event_id,
-                        event.home_team,
-                        event.away_team,
-                        len(quotes),
-                    )
+                    if fixtures_polled % 25 == 0:
+                        logger.info("progress %s/%s", fixtures_polled, len(fixture_ids))
                 except Exception:
                     error_count += 1
                     logger.exception("fixture poll failed: %s", fixture_id)
@@ -98,9 +104,10 @@ def run_forever(settings: Optional[Settings] = None) -> None:
     settings = settings or get_settings()
     backend = "supabase-rest" if settings.uses_supabase_rest else settings.database_url
     logger.info(
-        "starting bwin poller interval=%ss backend=%s",
+        "starting bwin poller interval=%ss backend=%s sports=%s",
         settings.poll_interval_sec,
         backend,
+        settings.bwin_sport_ids,
     )
     while True:
         started = time.time()

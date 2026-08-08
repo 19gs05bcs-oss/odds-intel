@@ -1,4 +1,5 @@
 # Deploy as a Worker. Env style matches acoreapi (SUPABASE_URL + SUPABASE_KEY).
+# Discovers ALL fixtures for BWIN_SPORT_IDS (default football=4).
 name: odds-intel
 services:
   - name: bwin-worker
@@ -6,19 +7,19 @@ services:
     instance_type: nano
     env:
       - key: SUPABASE_URL
-        value: "" # https://xxxx.supabase.co
+        value: ""
       - key: SUPABASE_KEY
-        value: "" # service_role / secret
+        value: ""
       - key: BWIN_ACCESS_ID
         value: ""
-      - key: BWIN_FIXTURE_IDS
-        value: "" # e.g. 2:7823441,2:7823442
       - key: BWIN_SPORT_IDS
         value: "4"
       - key: BWIN_MAX_FIXTURES
-        value: "40"
+        value: "0"
+      - key: BWIN_FIXTURES_PAGE_SIZE
+        value: "100"
       - key: POLL_INTERVAL_SEC
-        value: "30"
+        value: "60"
       - key: LOG_LEVEL
         value: INFO
     docker:

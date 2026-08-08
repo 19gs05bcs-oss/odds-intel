@@ -12,7 +12,7 @@ from rich.table import Table
 from odds_intel.config import get_settings
 from odds_intel.db.connection import connect, migrate
 from odds_intel.db.factory import create_repository
-from odds_intel.sources.bwin import BwinClient, parse_fixture_view
+from odds_intel.sources.bwin import BwinClient, discover_access_id, parse_fixture_view
 from odds_intel.worker.poller import poll_once, run_forever
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -42,6 +42,18 @@ def migrate_cmd() -> None:
     migrate(db, settings)
     db.close()
     console.print(f"[green]migrated[/green] {settings.database_url}")
+
+
+@app.command("discover-access-id")
+def discover_access_id_cmd() -> None:
+    """Fetch Bwin sports page and print public x-bwin-accessid if found."""
+    _setup_logging()
+    settings = get_settings()
+    found = discover_access_id(base_url=settings.bwin_base_url)
+    if not found:
+        console.print("[red]access id not found[/red]")
+        raise typer.Exit(1)
+    console.print(found)
 
 
 @app.command("poll-once")

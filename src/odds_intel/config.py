@@ -19,9 +19,12 @@ class Settings(BaseSettings):
     bwin_lang: str = "en"
     bwin_country: str = "GB"
     bwin_user_country: str = "GB"
+    # Optional debug allow-list. Empty = discover ALL fixtures for sport ids.
     bwin_fixture_ids: str = ""
     bwin_sport_ids: str = "4"
-    bwin_max_fixtures: int = 40
+    # 0 = no cap (all discovered fixtures)
+    bwin_max_fixtures: int = 0
+    bwin_fixtures_page_size: int = 100
 
     poll_interval_sec: float = 30.0
     request_timeout_sec: float = 25.0

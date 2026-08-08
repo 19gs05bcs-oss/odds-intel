@@ -5,6 +5,7 @@ from typing import Any, Optional
 import httpx
 
 from odds_intel.config import Settings
+from odds_intel.sources.bwin.access_id import resolve_access_id
 
 SOURCE = "bwin"
 
@@ -12,6 +13,7 @@ SOURCE = "bwin"
 class BwinClient:
     def __init__(self, settings: Settings, client: Optional[httpx.Client] = None) -> None:
         self.settings = settings
+        self._access_id: Optional[str] = None
         self._owns_client = client is None
         self.client = client or httpx.Client(
             base_url=settings.bwin_base_url.rstrip("/"),
@@ -36,9 +38,13 @@ class BwinClient:
         self.close()
 
     def _require_access_id(self) -> str:
-        if not self.settings.bwin_access_id:
-            raise RuntimeError("BWIN_ACCESS_ID is required")
-        return self.settings.bwin_access_id
+        if self._access_id:
+            return self._access_id
+        self._access_id = resolve_access_id(
+            self.settings.bwin_access_id,
+            base_url=self.settings.bwin_base_url,
+        )
+        return self._access_id
 
     def _common_params(self) -> dict[str, Any]:
         return {
@@ -49,24 +55,69 @@ class BwinClient:
         }
 
     def list_fixtures(self, sport_id: int, max_fixtures: int | None = None) -> list[str]:
-        params = {
-            **self._common_params(),
-            "sportIds": sport_id,
-        }
-        resp = self.client.get("/cds-api/bettingoffer/fixtures", params=params)
-        resp.raise_for_status()
-        payload = resp.json()
-        ids = _extract_fixture_ids(payload)
-        limit = max_fixtures if max_fixtures is not None else self.settings.bwin_max_fixtures
-        return ids[:limit]
+        """Discover all fixture ids for a sport (paginated). max_fixtures<=0 → no cap."""
+        limit = self.settings.bwin_max_fixtures if max_fixtures is None else max_fixtures
+        page_size = max(1, self.settings.bwin_fixtures_page_size)
+        found: list[str] = []
+        seen: set[str] = set()
+        skip = 0
+
+        while True:
+            if limit > 0 and len(found) >= limit:
+                break
+            params = {
+                **self._common_params(),
+                "sportIds": sport_id,
+                "fixtureTypes": "Standard",
+                "state": "Latest",
+                "offerMapping": "Filtered",
+                "take": page_size,
+                "skip": skip,
+            }
+            resp = self.client.get("/cds-api/bettingoffer/fixtures", params=params)
+            resp.raise_for_status()
+            page_ids = _extract_fixture_ids(resp.json())
+            if not page_ids:
+                # some regions ignore skip/take — one unpaginated call then stop
+                if skip == 0:
+                    params.pop("take", None)
+                    params.pop("skip", None)
+                    resp = self.client.get("/cds-api/bettingoffer/fixtures", params=params)
+                    resp.raise_for_status()
+                    page_ids = _extract_fixture_ids(resp.json())
+                    for fid in page_ids:
+                        if fid not in seen:
+                            seen.add(fid)
+                            found.append(fid)
+                break
+
+            new_on_page = 0
+            for fid in page_ids:
+                if fid in seen:
+                    continue
+                seen.add(fid)
+                found.append(fid)
+                new_on_page += 1
+                if limit > 0 and len(found) >= limit:
+                    break
+
+            if new_on_page == 0:
+                break
+            skip += page_size
+            # safety: avoid infinite loop if API ignores skip
+            if skip > 20_000:
+                break
+
+        if limit > 0:
+            return found[:limit]
+        return found
 
     def fixture_view(self, fixture_id: str) -> dict[str, Any]:
-        fid = fixture_id if ":" in fixture_id or fixture_id.isdigit() else fixture_id
         params = {
             **self._common_params(),
             "offerMapping": "All",
             "scoreboardMode": "Full",
-            "fixtureIds": fid,
+            "fixtureIds": fixture_id,
             "state": "Latest",
             "includePrecreatedBetBuilder": "false",
             "supportVirtual": "false",
@@ -84,14 +135,25 @@ def _extract_fixture_ids(payload: Any) -> list[str]:
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
-            # common shapes: {id: "2:123"} or nested fixtures arrays
             fid = node.get("id")
+            if isinstance(fid, (int, float)):
+                fid = str(int(fid))
             if isinstance(fid, str) and (fid.startswith("2:") or fid.isdigit()):
-                # prefer compound ids; skip pure market/option numeric noise by requiring stage/participants hints
-                if "participants" in node or "stage" in node or "startDate" in node or "name" in node:
-                    if fid not in seen:
-                        seen.add(fid)
-                        found.append(fid)
+                looks_like_fixture = any(
+                    key in node
+                    for key in (
+                        "participants",
+                        "stage",
+                        "startDate",
+                        "startTime",
+                        "competition",
+                        "sport",
+                        "name",
+                    )
+                )
+                if looks_like_fixture and fid not in seen:
+                    seen.add(fid)
+                    found.append(fid)
             for value in node.values():
                 walk(value)
         elif isinstance(node, list):
