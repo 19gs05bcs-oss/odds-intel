@@ -1,7 +1,7 @@
-Guncel lokal kopya (HEAD).
+Bu klasör GitHub'a yüklemek / kopyalamak içindir (hesap askıdayken).
 
-1) Supabase SQL Editor: SCHEMA_CALISTIR.sql (veya supabase/schema.sql) CALISTIR
-2) GitHuba yukle: src/ + .github/workflows/bwin-poll.yml
-   (GITHUB_ACTIONS/bwin-poll.yml gorunur kopya; Create new file yolu: .github/workflows/bwin-poll.yml)
-3) Secrets: SUPABASE_URL, SUPABASE_KEY, BWIN_ACCESS_ID
-4) Actions -> bwin-poll -> Run workflow
+1) Supabase SQL Editor → SCHEMA_CALISTIR.sql (veya migrate_missing_tables.sql) çalıştır
+2) Bu klasörün içeriğini GitHub repo root'una kopyala / push et
+3) Actions secrets: SUPABASE_URL, SUPABASE_KEY, BWIN_ACCESS_ID
+
+Yeni model: oranlar events.markets_json (tek satır JSON), history = event_odds_history

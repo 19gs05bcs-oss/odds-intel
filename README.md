@@ -19,9 +19,9 @@ Phase 1: **Bwin** collector that runs continuously (Koyeb worker), stores **open
 
 ## Change-only model
 
-- **Opening:** selection ilk görüldüğünde `quote_changes.change_type = opening`
-- **Ara hareket:** odds veya suspend değişince tek satır
-- **Değişim yok:** sadece `last_seen_at` güncellenir (history şişmez)
+- **Opening:** maçın tüm marketleri `events.markets_json` olarak yazılır; history’de `change_type = opening`
+- **Ara hareket:** herhangi bir odds/suspend değişince event için **tek JSON satırı** (`event_odds_history`)
+- **Değişim yok:** history’ye yazılmaz (`markets_hash` aynıysa skip)
 - **Closing:** skor `is_final` veya event closed → `events.closing_captured_at`
 
 ## Storage: Supabase (Koyeb env = acoreapi stili)
@@ -34,10 +34,12 @@ SUPABASE_KEY=sb_secret_...   # service_role / secret (anon değil)
 ```
 
 1. Supabase proje aç  
-2. **SQL Editor** → `supabase/schema.sql` çalıştır (bir kez)  
-3. Koyeb worker’a `SUPABASE_URL`, `SUPABASE_KEY`, `BWIN_ACCESS_ID` ekle  
+2. **SQL Editor** → yeni proje: `supabase/schema.sql`  
+   Mevcut DB (eski satır satır model): `supabase/alter_events_markets_json.sql`  
+3. Koyeb / Actions’a güncel kodu deploy et  
 
-Tablolar: `events`, `selections_current`, `quote_changes`, `score_changes`, `poll_runs`
+Tablolar: `events` (içinde `markets_json`), `event_odds_history`, `score_changes`, `poll_runs`  
+Eski `selections_current` / `quote_changes` artık kullanılmaz; istersen sonra drop edebilirsin.
 
 ## Quick start (local → Supabase)
 
