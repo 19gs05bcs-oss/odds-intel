@@ -100,13 +100,20 @@ def poll_once(settings: Optional[Settings] = None) -> dict[str, int]:
     return summary
 
 
-def run_forever(settings: Optional[Settings] = None) -> None:
+def run_forever(
+    settings: Optional[Settings] = None,
+    *,
+    max_runtime_sec: Optional[float] = None,
+) -> None:
+    """Poll in a loop. If max_runtime_sec is set (e.g. GitHub Actions ~5h), exit cleanly."""
     settings = settings or get_settings()
     backend = "supabase-rest" if settings.uses_supabase_rest else settings.database_url
+    deadline = (time.time() + max_runtime_sec) if max_runtime_sec and max_runtime_sec > 0 else None
     logger.info(
-        "starting bwin poller interval=%ss backend=%s sports=%s "
+        "starting bwin poller interval=%ss max_runtime=%s backend=%s sports=%s "
         "supabase_url=%s bwin_access_id=%s proxy=%s",
         settings.poll_interval_sec,
+        f"{int(max_runtime_sec)}s" if max_runtime_sec else "unlimited",
         backend,
         settings.bwin_sport_ids,
         "set" if settings.supabase_url else "MISSING",
@@ -118,16 +125,32 @@ def run_forever(settings: Optional[Settings] = None) -> None:
             "BWIN_ACCESS_ID empty in process env — set it on the worker service, "
             "then Save and Deploy"
         )
+    cycles = 0
     while True:
+        if deadline is not None and time.time() >= deadline:
+            logger.info("max runtime reached after %s cycles — exiting", cycles)
+            return
         started = time.time()
         blocked = False
         try:
             poll_once(settings)
+            cycles += 1
         except Exception as exc:
             logger.exception("poll_once crashed")
             blocked = "403" in str(exc) or "Forbidden" in str(exc)
-        elapsed = time.time() - started
+        if deadline is not None:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                logger.info("max runtime reached after %s cycles — exiting", cycles)
+                return
+        else:
+            remaining = None
         # Back off hard on IP blocks so we don't hammer Bwin every 30s
         interval = 300.0 if blocked else settings.poll_interval_sec
-        sleep_for = max(1.0, interval - elapsed)
+        sleep_for = max(1.0, interval - (time.time() - started))
+        if remaining is not None:
+            sleep_for = min(sleep_for, max(0.0, remaining))
+            if sleep_for <= 0:
+                logger.info("max runtime reached after %s cycles — exiting", cycles)
+                return
         time.sleep(sleep_for)

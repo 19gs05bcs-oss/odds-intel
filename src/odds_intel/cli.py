@@ -46,7 +46,8 @@ def migrate_cmd() -> None:
 
 @app.command("discover-access-id")
 def discover_access_id_cmd() -> None:
-    """Discover + validate a working x-bwin-accessid (prints the id)."""
+    """Discover + validate a working x-bwin-accessid (prints only the id on stdout)."""
+    # Keep logs on stderr so $(odds-intel discover-access-id) stays machine-readable.
     _setup_logging()
     settings = get_settings()
     found = discover_access_id(
@@ -57,9 +58,10 @@ def discover_access_id_cmd() -> None:
         extra_candidates=[settings.bwin_access_id] if settings.bwin_access_id else [],
     )
     if not found:
-        console.print("[red]working access id not found[/red]")
+        console.print("[red]working access id not found[/red]", err=True)
         raise typer.Exit(1)
-    console.print(found)
+    # Plain stdout for Actions / scripts
+    print(found, flush=True)
 
 
 @app.command("poll-once")
@@ -71,10 +73,17 @@ def poll_once_cmd() -> None:
 
 
 @app.command("worker")
-def worker_cmd() -> None:
-    """Continuous poller for Koyeb / long-running hosts."""
+def worker_cmd(
+    max_runtime_sec: Optional[float] = typer.Option(
+        None,
+        "--max-runtime-sec",
+        envvar="WORKER_MAX_RUNTIME_SEC",
+        help="Stop after N seconds (GitHub Actions ~18000 = 5h). Empty = forever.",
+    ),
+) -> None:
+    """Continuous poller for Koyeb / long-running hosts / Actions."""
     _setup_logging()
-    run_forever()
+    run_forever(max_runtime_sec=max_runtime_sec)
 
 
 @app.command("show-event")

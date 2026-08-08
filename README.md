@@ -38,8 +38,18 @@ SUPABASE_KEY=sb_secret_...   # service_role / secret (anon değil)
    Mevcut DB (eski satır satır model): `supabase/alter_events_markets_json.sql`  
 3. Koyeb / Actions’a güncel kodu deploy et  
 
-Tablolar: `events` (içinde `markets_json`), `event_odds_history`, `score_changes`, `poll_runs`  
-Eski `selections_current` / `quote_changes` artık kullanılmaz; istersen sonra drop edebilirsin.
+**Kullanılan tablolar:**
+
+| Tablo | Ne tutar |
+|-------|----------|
+| `events` | Maç meta + **güncel** oranlar (`markets_json`, `markets_hash`) |
+| `event_odds_history` | Oran değişince tam JSON snapshot |
+| `score_changes` | Skor değişimleri (change-only) |
+| `poll_runs` | Poll özeti / sayaçlar |
+
+Eski `selections_current` / `quote_changes` kullanılmaz → `DROP_ESKI_TABLOLAR.sql`.
+
+**Access id:** Actions `discover-access-id` ile kazır; değiştiyse `BWIN_ACCESS_ID` secret’ını günceller (`refresh-bwin-access` her 6s, `bwin-poll` her poll’da).
 
 ## Quick start (local → Supabase)
 
