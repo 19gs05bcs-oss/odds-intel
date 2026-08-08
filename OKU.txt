@@ -1,0 +1,7 @@
+Bu klasor Mac yerel kopyadir (git push askida).
+GitHub upload icin:
+1) .github/workflows/bwin-poll.yml  -> repo yolu: .github/workflows/bwin-poll.yml
+   (veya GITHUB_ACTIONS/bwin-poll.yml icerigini Create new file ile yapistir)
+2) src/ klasorunu oldugu gibi yukle
+3) supabase/schema.sql SQL Editorda calistir
+4) Secrets: SUPABASE_URL, SUPABASE_KEY, BWIN_ACCESS_ID
