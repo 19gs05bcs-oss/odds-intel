@@ -25,4 +25,4 @@ odds-intel = "odds_intel.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-odds_intel = ["db/schema.sql"]
+odds_intel = ["db/schema.sql", "db/schema.postgres.sql"]

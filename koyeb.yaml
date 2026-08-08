@@ -1,15 +1,16 @@
-# Example Koyeb app definition (adjust service name / region in dashboard if needed).
-# Deploy as a Worker (not web). Attach a Postgres database and set env vars.
+# Deploy as a Worker. Env style matches acoreapi (SUPABASE_URL + SUPABASE_KEY).
 name: odds-intel
 services:
   - name: bwin-worker
     type: worker
-    instance_type: free
+    instance_type: nano
     env:
-      - key: DATABASE_URL
-        value: "{{ KOYEB_POSTGRES_URL }}"
+      - key: SUPABASE_URL
+        value: "" # https://xxxx.supabase.co
+      - key: SUPABASE_KEY
+        value: "" # service_role / secret
       - key: BWIN_ACCESS_ID
-        value: "" # set in Koyeb secrets
+        value: ""
       - key: BWIN_FIXTURE_IDS
         value: "" # e.g. 2:7823441,2:7823442
       - key: BWIN_SPORT_IDS
@@ -22,4 +23,3 @@ services:
         value: INFO
     docker:
       dockerfile: Dockerfile
-    # command defaults to Dockerfile CMD: odds-intel worker

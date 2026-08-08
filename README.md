@@ -24,7 +24,22 @@ Phase 1: **Bwin** collector that runs continuously (Koyeb worker), stores **open
 - **Değişim yok:** sadece `last_seen_at` güncellenir (history şişmez)
 - **Closing:** skor `is_final` veya event closed → `events.closing_captured_at`
 
-## Quick start (local)
+## Storage: Supabase (Koyeb env = acoreapi stili)
+
+Production yazımı **PostgREST** üzerinden:
+
+```bash
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=sb_secret_...   # service_role / secret (anon değil)
+```
+
+1. Supabase proje aç  
+2. **SQL Editor** → `supabase/schema.sql` çalıştır (bir kez)  
+3. Koyeb worker’a `SUPABASE_URL`, `SUPABASE_KEY`, `BWIN_ACCESS_ID` ekle  
+
+Tablolar: `events`, `selections_current`, `quote_changes`, `score_changes`, `poll_runs`
+
+## Quick start (local → Supabase)
 
 ```bash
 cd ~/Projects/odds-intel
@@ -32,13 +47,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 cp .env.example .env
-# fill BWIN_ACCESS_ID and optionally BWIN_FIXTURE_IDS
+# fill DATABASE_URL (Supabase) + BWIN_ACCESS_ID + BWIN_FIXTURE_IDS
 odds-intel migrate
 odds-intel poll-once
 odds-intel worker
 ```
 
-Offline (EC2’deki JSON ile):
+Offline (EC2’deki JSON ile, yine Supabase’e yazar):
 
 ```bash
 odds-intel ingest-file ./bwin_offers.json
@@ -47,10 +62,17 @@ odds-intel show-event bwin:2:7823441
 
 ## Koyeb
 
-1. Postgres ekle → `DATABASE_URL`
-2. Secret: `BWIN_ACCESS_ID`
-3. Worker service, Dockerfile CMD: `odds-intel worker`
-4. Başlangıçta `BWIN_FIXTURE_IDS` ile dar tut; sonra `BWIN_SPORT_IDS=4` discovery
+Env (acoreapi gibi):
+
+| Key | Değer |
+|---|---|
+| `SUPABASE_URL` | `https://xxxx.supabase.co` |
+| `SUPABASE_KEY` | service_role / secret |
+| `BWIN_ACCESS_ID` | Bwin `x-bwin-accessid` |
+| `BWIN_FIXTURE_IDS` | başlangıçta dar tut |
+
+Service type: **Worker**, CMD: `odds-intel worker`  
+Repo’da `src/` klasörü olmak zorunda (Docker `COPY src ./src`).
 
 ## Useful endpoints (from your HAR)
 
